@@ -1,0 +1,90 @@
+name: Release
+
+# Publishes a release whenever the version in manifest.json lands on main
+# without a matching tag. Bumping that version is the only thing needed to cut
+# a release; ordinary commits to main do nothing.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "custom_components/**"
+      - "hacs.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Check version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.manifest.outputs.version }}
+      needed: ${{ steps.tag.outputs.needed }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the version from the manifest
+        id: manifest
+        run: |
+          version=$(jq -re '.version' custom_components/xmeye/manifest.json)
+          if ! printf '%s' "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([.-].+)?$'; then
+            echo "::error::manifest.json version '$version' is not a semver version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Manifest declares version $version"
+
+      - name: Look for an existing tag
+        id: tag
+        run: |
+          version='${{ steps.manifest.outputs.version }}'
+          if git ls-remote --exit-code --tags origin "refs/tags/v$version" >/dev/null 2>&1; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$version is already released — nothing to do."
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::v$version has no tag yet — it will be released."
+          fi
+
+  validate:
+    name: Validate
+    needs: check
+    if: needs.check.outputs.needed == 'true'
+    # Nothing ships unless hassfest, HACS, ruff and the tests all pass.
+    uses: ./.github/workflows/validate.yml
+
+  release:
+    name: Publish
+    needs: [check, validate]
+    if: needs.check.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the install archive
+        # Laid out so it unzips straight into a Home Assistant config directory.
+        run: |
+          mkdir -p dist/custom_components
+          cp -r custom_components/xmeye dist/custom_components/
+          (cd dist && zip -qr ../xmeye.zip custom_components -x '*__pycache__*' '*.pyc')
+          unzip -l xmeye.zip
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          # gh creates the tag at --target when it does not already exist.
+          gh release create "v$VERSION" \
+            --title "v$VERSION" \
+            --target "$GITHUB_SHA" \
+            --generate-notes \
+            xmeye.zip

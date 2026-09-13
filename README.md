@@ -1,6 +1,8 @@
 # XMEye for Home Assistant
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
+[![Validate](https://github.com/TheJenos/xmeye-control/actions/workflows/validate.yml/badge.svg)](https://github.com/TheJenos/xmeye-control/actions/workflows/validate.yml)
+[![Release](https://img.shields.io/github/v/release/TheJenos/xmeye-control?display_name=tag&sort=semver)](https://github.com/TheJenos/xmeye-control/releases)
 
 A Home Assistant integration for **Xiongmai** DVRs, NVRs and IP cameras — the
 enormous family of cheap recorders sold under **XMEye**, **iCSee**, **Sofia**
@@ -30,15 +32,26 @@ recordings.
 
 ### HACS
 
+[![Open your Home Assistant instance and open this repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=TheJenos&repository=xmeye-control&category=integration)
+
+Click the button above, install **XMEye (Xiongmai / Sofia DVRIP)**, then restart
+Home Assistant.
+
+Or add it by hand:
+
 1. HACS → ⋮ → **Custom repositories**
-2. Add `https://github.com/nadun/xmeye-control` as an **Integration**
+2. Add `https://github.com/TheJenos/xmeye-control` as an **Integration**
 3. Install **XMEye (Xiongmai / Sofia DVRIP)**, then restart Home Assistant
-4. **Settings → Devices & Services → Add Integration → XMEye**
+
+Either way, finish with
+[**Settings → Devices & Services → Add Integration → XMEye**](https://my.home-assistant.io/redirect/config_flow_start/?domain=xmeye).
 
 ### Manual
 
-Copy `custom_components/xmeye` into your Home Assistant `config/custom_components/`
-directory and restart.
+Download `xmeye.zip` from the
+[latest release](https://github.com/TheJenos/xmeye-control/releases/latest) and
+unzip it into your Home Assistant `config/` directory — it is laid out so the
+files land in `config/custom_components/xmeye/`. Then restart Home Assistant.
 
 ## Setup
 
@@ -221,6 +234,23 @@ The protocol tests drive a fake DVRIP server, covering framing, the Sofia hash,
 channel merging, snapshot reassembly, per-channel talk claims and audio
 packetisation without hardware. The entity tests cover speaker route selection
 and fallback; they skip themselves when Home Assistant is not installed.
+
+### Cutting a release
+
+Releases are automated. Bump `version` in
+[`custom_components/xmeye/manifest.json`](custom_components/xmeye/manifest.json)
+and merge to `main` — that is the whole process.
+
+On every push to `main` the [release workflow](.github/workflows/release.yml)
+reads that version and looks for a matching `v<version>` tag. If one already
+exists nothing happens, so ordinary commits never produce a release. If it does
+not, the full validation suite runs, and only once hassfest, HACS, ruff and the
+tests are all green does it tag the commit, publish a release with generated
+notes, and attach `xmeye.zip`.
+
+Because the check is "does this tag exist" rather than "did this file change",
+the workflow is safe to re-run and copes with force pushes and squashed merges.
+It can also be triggered by hand from the Actions tab.
 
 ## Legacy Node.js library
 

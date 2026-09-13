@@ -6,6 +6,12 @@ on:
   schedule:
     - cron: "0 4 * * 1"
   workflow_dispatch:
+  # Lets the release workflow gate on these same checks instead of
+  # duplicating them.
+  workflow_call:
+
+permissions:
+  contents: read
 
 jobs:
   hassfest:
@@ -23,6 +29,8 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   ruff:
     name: ruff
