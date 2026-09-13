@@ -1,0 +1,204 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to your XMEye device",
+        "description": "Enter the address of your Xiongmai DVR, NVR or IP camera. The DVRIP service listens on TCP port 34567.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password"
+        },
+        "data_description": {
+          "port": "The DVRIP control port, not the web or RTSP port.",
+          "password": "Leave empty if the device has no password set."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Re-authenticate",
+        "description": "The device rejected the stored credentials. Enter them again.",
+        "data": {
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not reach the device on that address and port.",
+      "invalid_auth": "The device rejected those credentials.",
+      "unknown": "Unexpected error. Check the Home Assistant log for details."
+    },
+    "abort": {
+      "already_configured": "This device is already set up.",
+      "reauth_successful": "Re-authentication was successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "XMEye options",
+        "data": {
+          "scan_interval": "Polling interval",
+          "rtsp_port": "RTSP port",
+          "stream": "Stream quality",
+          "rtsp_template": "RTSP URL template",
+          "talk_channel": "Talk channel",
+          "camera_speakers": "Speakers for individual cameras",
+          "skip_empty_channels": "Hide unused channels"
+        },
+        "data_description": {
+          "rtsp_template": "Placeholders: {host}, {rtsp_port}, {username}, {password}, {channel} (1-based), {stream}. Only change this if live video does not work.",
+          "talk_channel": "-1 sends audio to the device's own speaker output, which is what most firmware supports. Set a channel number only if your device routes talk per camera.",
+          "camera_speakers": "Creates an extra speaker entity per camera so text-to-speech can target one camera instead of the whole recorder.",
+          "skip_empty_channels": "Do not create entities for channels with no camera attached."
+        }
+      }
+    }
+  },
+  "selector": {
+    "camera_speakers": {
+      "options": {
+        "ip_cameras": "IP cameras only",
+        "all": "Every channel in use",
+        "none": "None, just the recorder"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "recording": {
+        "name": "{channel} recording"
+      },
+      "online": {
+        "name": "{channel} signal"
+      }
+    },
+    "sensor": {
+      "bitrate": {
+        "name": "{channel} bitrate"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "storage_total": {
+        "name": "Storage total"
+      },
+      "storage_free": {
+        "name": "Storage free"
+      },
+      "storage_used": {
+        "name": "Storage used"
+      }
+    },
+    "button": {
+      "reboot": {
+        "name": "Reboot"
+      }
+    },
+    "media_player": {
+      "speaker": {
+        "name": "Speaker"
+      },
+      "camera_speaker": {
+        "name": "{channel} speaker"
+      }
+    }
+  },
+  "services": {
+    "ptz": {
+      "name": "PTZ move",
+      "description": "Moves a pan/tilt/zoom camera. Directional and zoom commands run continuously until stopped.",
+      "fields": {
+        "command": {
+          "name": "Command",
+          "description": "The movement to perform."
+        },
+        "step": {
+          "name": "Step",
+          "description": "Movement speed, 1 (slowest) to 8 (fastest)."
+        },
+        "preset": {
+          "name": "Preset",
+          "description": "Preset number, used by the preset and tour commands."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "How long to move before stopping automatically. Leave empty to keep moving until PTZ stop is called."
+        }
+      }
+    },
+    "ptz_stop": {
+      "name": "PTZ stop",
+      "description": "Stops a continuous PTZ movement.",
+      "fields": {
+        "command": {
+          "name": "Command",
+          "description": "The movement to stop; use the same command that started it."
+        }
+      }
+    },
+    "set_time": {
+      "name": "Set device clock",
+      "description": "Sets the device's internal clock.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The XMEye device to update."
+        },
+        "time": {
+          "name": "Time",
+          "description": "The time to set. Defaults to the Home Assistant host's current local time."
+        }
+      }
+    },
+    "set_channel_title": {
+      "name": "Set channel name",
+      "description": "Renames a channel on the device itself.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The XMEye device to update."
+        },
+        "channel": {
+          "name": "Channel",
+          "description": "Channel number, starting at 0."
+        },
+        "title": {
+          "name": "Name",
+          "description": "The new channel name."
+        }
+      }
+    },
+    "search_recordings": {
+      "name": "Search recordings",
+      "description": "Returns the recordings stored on the device for a channel and time range.",
+      "fields": {
+        "device_id": {
+          "name": "Device",
+          "description": "The XMEye device to search."
+        },
+        "channel": {
+          "name": "Channel",
+          "description": "Channel number, starting at 0."
+        },
+        "start": {
+          "name": "Start",
+          "description": "Beginning of the search range."
+        },
+        "end": {
+          "name": "End",
+          "description": "End of the search range."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "device_not_found": {
+      "message": "No device found with id {device_id}."
+    },
+    "device_not_loaded": {
+      "message": "The XMEye device {device_id} is not currently loaded."
+    }
+  }
+}

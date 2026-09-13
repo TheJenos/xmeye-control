@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.venv-ha/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Legacy Node.js library
+node_modules/
+*.tgz
+
+# Media / scratch
+*.log
+*.alaw
+*.aiff
+.DS_Store

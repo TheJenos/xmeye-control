@@ -1,0 +1,46 @@
+{
+  "name": "xmeye-control",
+  "version": "1.0.0",
+  "description": "Control Xiongmai / XMEye / Sofia (DVRIP) NVRs, DVRs and IP cameras over TCP 34567 — list cameras, snapshots, PTZ, recordings search, config, users, reboot, time, and two-way audio (talk).",
+  "type": "commonjs",
+  "main": "src/index.js",
+  "types": "src/index.d.ts",
+  "bin": {
+    "xmeye-control": "bin/cli.js"
+  },
+  "files": [
+    "src/",
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "example": "node examples/play.js"
+  },
+  "keywords": [
+    "dvrip",
+    "sofia",
+    "xiongmai",
+    "xmeye",
+    "icsee",
+    "nvr",
+    "dvr",
+    "cctv",
+    "surveillance",
+    "camera",
+    "ptz",
+    "snapshot",
+    "onvif-alternative",
+    "two-way-audio",
+    "backchannel",
+    "optalk",
+    "g711",
+    "speaker"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "dependencies": {},
+  "license": "MIT",
+  "author": "nadun"
+}

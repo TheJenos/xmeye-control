@@ -1,0 +1,13 @@
+{
+  "domain": "xmeye",
+  "name": "XMEye (Xiongmai / Sofia DVRIP)",
+  "codeowners": ["@nadun"],
+  "config_flow": true,
+  "dependencies": ["ffmpeg", "media_source", "stream"],
+  "documentation": "https://github.com/nadun/xmeye-control",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/nadun/xmeye-control/issues",
+  "requirements": [],
+  "version": "2.0.0"
+}

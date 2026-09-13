@@ -1,0 +1,67 @@
+"""Per-channel binary sensors for the XMEye integration."""
+
+from __future__ import annotations
+
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
+from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
+
+from .const import CONF_SKIP_EMPTY_CHANNELS
+from .coordinator import XmeyeConfigEntry, XmeyeCoordinator
+from .entity import XmeyeChannelEntity
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: XmeyeConfigEntry,
+    async_add_entities: AddConfigEntryEntitiesCallback,
+) -> None:
+    """Set up recording and connectivity sensors per channel."""
+    coordinator = entry.runtime_data
+    skip_empty = entry.options.get(CONF_SKIP_EMPTY_CHANNELS, True)
+    entities: list[XmeyeChannelEntity] = []
+    for cam in coordinator.data.cameras:
+        if skip_empty and cam["type"] == "empty":
+            continue
+        entities.append(XmeyeRecordingSensor(coordinator, cam["channel"]))
+        entities.append(XmeyeOnlineSensor(coordinator, cam["channel"]))
+    async_add_entities(entities)
+
+
+class XmeyeRecordingSensor(XmeyeChannelEntity, BinarySensorEntity):
+    """On while the device is recording this channel."""
+
+    _attr_translation_key = "recording"
+    _attr_device_class = BinarySensorDeviceClass.RUNNING
+
+    def __init__(self, coordinator: XmeyeCoordinator, channel: int) -> None:
+        """Initialise for ``channel``."""
+        super().__init__(coordinator, channel, "recording")
+        self._attr_translation_placeholders = {"channel": self.channel_title}
+
+    @property
+    def is_on(self) -> bool:
+        """Whether this channel is being recorded."""
+        return bool(self.channel_data.get("recording"))
+
+
+class XmeyeOnlineSensor(XmeyeChannelEntity, BinarySensorEntity):
+    """On while the channel is carrying a video signal."""
+
+    _attr_translation_key = "online"
+    _attr_device_class = BinarySensorDeviceClass.CONNECTIVITY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: XmeyeCoordinator, channel: int) -> None:
+        """Initialise for ``channel``."""
+        super().__init__(coordinator, channel, "online")
+        self._attr_translation_placeholders = {"channel": self.channel_title}
+
+    @property
+    def is_on(self) -> bool:
+        """Whether the channel currently has a signal."""
+        return bool(self.channel_data.get("online"))

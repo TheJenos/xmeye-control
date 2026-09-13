@@ -1,0 +1,120 @@
+ptz:
+  target:
+    entity:
+      integration: xmeye
+      domain: camera
+  fields:
+    command:
+      required: true
+      example: DirectionLeft
+      selector:
+        select:
+          options:
+            - DirectionUp
+            - DirectionDown
+            - DirectionLeft
+            - DirectionRight
+            - DirectionLeftUp
+            - DirectionLeftDown
+            - DirectionRightUp
+            - DirectionRightDown
+            - ZoomTile
+            - ZoomWide
+            - FocusNear
+            - FocusFar
+            - IrisSmall
+            - IrisLarge
+            - SetPreset
+            - GotoPreset
+            - ClearPreset
+            - StartTour
+            - StopTour
+    step:
+      default: 5
+      selector:
+        number:
+          min: 1
+          max: 8
+          mode: slider
+    preset:
+      default: -1
+      selector:
+        number:
+          min: -1
+          max: 255
+          mode: box
+    duration:
+      example: 0.5
+      selector:
+        number:
+          min: 0
+          max: 30
+          step: 0.1
+          unit_of_measurement: s
+          mode: box
+
+ptz_stop:
+  target:
+    entity:
+      integration: xmeye
+      domain: camera
+  fields:
+    command:
+      required: true
+      example: DirectionLeft
+      selector:
+        text:
+
+set_time:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: xmeye
+    time:
+      selector:
+        datetime:
+
+set_channel_title:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: xmeye
+    channel:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 63
+          mode: box
+    title:
+      required: true
+      example: Front door
+      selector:
+        text:
+
+search_recordings:
+  fields:
+    device_id:
+      required: true
+      selector:
+        device:
+          integration: xmeye
+    channel:
+      default: 0
+      selector:
+        number:
+          min: 0
+          max: 63
+          mode: box
+    start:
+      required: true
+      selector:
+        datetime:
+    end:
+      required: true
+      selector:
+        datetime:
