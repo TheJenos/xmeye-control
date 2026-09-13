@@ -225,10 +225,18 @@ behind a lock, because DVRIP matches replies to requests purely by arrival order
 
 ```bash
 uvx --with pytest-asyncio pytest -q     # protocol tests, no HA install needed
-pytest -q                               # add homeassistant to also run entity tests
+
+pip install -r requirements-test.txt    # ...or the full suite, entity tests included
+pytest -q
+
 uvx ruff check custom_components tests
 uvx ruff format custom_components tests
 ```
+
+`requirements-test.txt` carries the runtime requirements of the Home Assistant
+components this integration depends on. Home Assistant installs those lazily at
+runtime, so importing `homeassistant.components.ffmpeg` in a test fails without
+them.
 
 The protocol tests drive a fake DVRIP server, covering framing, the Sofia hash,
 channel merging, snapshot reassembly, per-channel talk claims and audio

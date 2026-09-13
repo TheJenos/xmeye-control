@@ -1,0 +1,13 @@
+# Test dependencies.
+#
+# Home Assistant installs each integration's requirements lazily at runtime, so
+# importing homeassistant.components.ffmpeg or .camera in a test fails unless
+# their requirements are present up front. These are those requirements, for
+# the components this integration declares in manifest.json.
+homeassistant
+pytest
+pytest-asyncio
+
+ha-ffmpeg      # homeassistant.components.ffmpeg
+numpy          # homeassistant.components.camera
+PyTurboJPEG    # homeassistant.components.camera
