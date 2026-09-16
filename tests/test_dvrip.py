@@ -13,6 +13,8 @@ from xmeye_dvrip import (
     CMD_ALARM_INFO,
     CMD_ALARM_SET,
     CMD_LOGIN,
+    CMD_PLAYBACK_CLAIM,
+    CMD_PLAYBACK_CONTROL,
     CMD_SNAP,
     CMD_TALK_DATA,
     HEADER_LEN,
@@ -49,6 +51,9 @@ class FakeDevice:
         self.server: asyncio.Server | None = None
         self.port = 0
         self.writer: asyncio.StreamWriter | None = None
+        # Raw chunks a "DownloadStart" answers with, before the terminating
+        # zero-length frame that signals end-of-file.
+        self.download_chunks: list[bytes] = [b"chunk-one", b"chunk-two"]
 
     async def start(self) -> None:
         """Listen on an ephemeral loopback port."""
@@ -81,12 +86,28 @@ class FakeDevice:
                 (cmd,) = struct.unpack_from("<H", head, 14)
                 payload = await reader.readexactly(length) if length else b""
                 self.received.append((cmd, payload))
+                if cmd == CMD_PLAYBACK_CONTROL and self._is_download_start(payload):
+                    for chunk in self.download_chunks:
+                        writer.write(frame(cmd + 1, chunk))
+                        await writer.drain()
+                    writer.write(frame(cmd + 1, b""))  # end-of-file marker
+                    await writer.drain()
+                    continue
                 reply = self._reply(cmd, payload)
                 if reply:
                     writer.write(reply)
                     await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
+
+    @staticmethod
+    def _is_download_start(payload: bytes) -> bool:
+        """Whether a PlayBack control frame is a DownloadStart request."""
+        body = json.loads(payload.rstrip(b"\x00\n"))
+        return (
+            body.get("Name") == "OPPlayBack"
+            and body.get("OPPlayBack", {}).get("Action") == "DownloadStart"
+        )
 
     def _reply(self, cmd: int, payload: bytes) -> bytes:
         """Produce the device's answer to one command."""
@@ -464,6 +485,42 @@ async def test_alarm_callback_error_does_not_kill_read_loop(device: FakeDevice) 
         await client.start_alarm_monitor()
         await device.push_alarm(MOTION_START)
         await asyncio.sleep(0.05)
+        titles = await client.channel_titles()
+    finally:
+        await client.close()
+    assert titles == ["Front", "Back"]
+
+
+async def test_download_recording_reassembles_chunks_until_the_eof_marker(
+    device: FakeDevice,
+) -> None:
+    """A download accumulates every chunk up to the zero-length terminator."""
+    client = await connect(device)
+    try:
+        data = await client.download_recording(
+            "/idea0/2024-01-01/001/main.h264",
+            "2024-01-01 10:00:00",
+            "2024-01-01 10:10:00",
+        )
+    finally:
+        await client.close()
+
+    assert data == b"chunk-onechunk-two"
+    actions = [
+        json.loads(p.rstrip(b"\x00\n"))["OPPlayBack"]["Action"]
+        for cmd, p in device.received
+        if cmd in (CMD_PLAYBACK_CLAIM, CMD_PLAYBACK_CONTROL)
+    ]
+    assert actions == ["Claim", "DownloadStart", "DownloadStop"]
+
+
+async def test_download_recording_leaves_client_usable_afterwards(
+    device: FakeDevice,
+) -> None:
+    """The connection still answers ordinary commands after a download."""
+    client = await connect(device)
+    try:
+        await client.download_recording("f.h264", "start", "end")
         titles = await client.channel_titles()
     finally:
         await client.close()

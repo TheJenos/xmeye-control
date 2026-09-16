@@ -48,6 +48,17 @@ class XmeyeChannelEntity(XmeyeEntity):
         return self.coordinator.data.camera(self._channel)
 
     @property
+    def available(self) -> bool:
+        """Unavailable once this channel has no camera attached or reachable.
+
+        Subclasses whose whole purpose is to report that fact (e.g. the
+        "online" connectivity sensor) override this back to the coordinator's
+        plain availability, since gating it on ``online`` would hide the very
+        state they exist to show.
+        """
+        return super().available and bool(self.channel_data.get("online"))
+
+    @property
     def channel_title(self) -> str:
         """The device-configured channel name, or a positional fallback."""
         title = self.channel_data.get("title")

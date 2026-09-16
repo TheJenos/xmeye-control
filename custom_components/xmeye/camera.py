@@ -88,11 +88,6 @@ class XmeyeCamera(XmeyeChannelEntity, Camera):
         return bool(self.channel_data.get("recording"))
 
     @property
-    def available(self) -> bool:
-        """A channel with no signal is reported unavailable."""
-        return super().available and bool(self.channel_data.get("online"))
-
-    @property
     def extra_state_attributes(self) -> dict[str, object]:
         """Expose the raw channel details for templates and automations."""
         data = self.channel_data

@@ -47,6 +47,12 @@ CMD_GROUPS = 1474
 CMD_SNAP = 1560
 CMD_ALARM_SET = 1500
 CMD_ALARM_INFO = 1504
+CMD_PLAYBACK_CONTROL = 1420
+CMD_PLAYBACK_CLAIM = 1424
+
+# Downloading a recording streams the whole file, which can run for minutes;
+# the ordinary request timeout is sized for control commands, not this.
+DOWNLOAD_TIMEOUT = 120.0
 
 # Ret codes surfaced by the device.
 RET_CODES: dict[int, str] = {
@@ -643,6 +649,95 @@ class DvripClient:
         )
         files = reply.get("OPFileQuery")
         return files if isinstance(files, list) else []
+
+    async def download_recording(
+        self, filename: str, start: str, end: str
+    ) -> bytes:
+        """Download one recorded file's raw stream (OPPlayBack).
+
+        ``filename``/``start``/``end`` must be the ``FileName``/``BeginTime``/
+        ``EndTime`` of an entry returned by :meth:`search_recordings`. The
+        device answers with its own recorded stream format (commonly raw
+        H.264), not a container a browser can play directly — the caller is
+        expected to remux it (see the ``media_source`` platform).
+        """
+        parameter = {
+            "PlayMode": "ByName",
+            "FileName": filename,
+            "StreamType": 0,
+            "Value": 0,
+            "TransMode": "TCP",
+        }
+        claim = await self.send_json(
+            CMD_PLAYBACK_CLAIM,
+            {
+                "Name": "OPPlayBack",
+                "SessionID": self._sid(),
+                "OPPlayBack": {
+                    "Action": "Claim",
+                    "Parameter": parameter,
+                    "StartTime": start,
+                    "EndTime": end,
+                },
+            },
+        )
+        self._check(claim, "recording download claim")
+
+        async with self._lock:
+            loop = asyncio.get_running_loop()
+            fut: asyncio.Future[bytes] = loop.create_future()
+            buffer = bytearray()
+
+            def collect(payload: bytes) -> None:
+                # The device signals end-of-file with a zero-length frame.
+                if fut.done():
+                    return
+                if not payload:
+                    fut.set_result(bytes(buffer))
+                    return
+                buffer.extend(payload)
+
+            self._collector = collect
+            try:
+                self._write(
+                    CMD_PLAYBACK_CONTROL,
+                    self._encode(
+                        {
+                            "Name": "OPPlayBack",
+                            "SessionID": self._sid(),
+                            "OPPlayBack": {
+                                "Action": "DownloadStart",
+                                "Parameter": parameter,
+                                "StartTime": start,
+                                "EndTime": end,
+                            },
+                        }
+                    ),
+                )
+                await self._writer.drain()  # type: ignore[union-attr]
+                data = await asyncio.wait_for(fut, DOWNLOAD_TIMEOUT)
+            except TimeoutError as err:
+                raise DvripError(
+                    f"timed out downloading recording {filename!r}"
+                ) from err
+            finally:
+                self._collector = None
+
+        with contextlib.suppress(DvripError):
+            await self.send_json(
+                CMD_PLAYBACK_CONTROL,
+                {
+                    "Name": "OPPlayBack",
+                    "SessionID": self._sid(),
+                    "OPPlayBack": {
+                        "Action": "DownloadStop",
+                        "Parameter": parameter,
+                        "StartTime": start,
+                        "EndTime": end,
+                    },
+                },
+            )
+        return data
 
     # ------------------------------------------------------------------
     # Snapshot

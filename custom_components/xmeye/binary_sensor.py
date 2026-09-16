@@ -65,6 +65,11 @@ class XmeyeOnlineSensor(XmeyeChannelEntity, BinarySensorEntity):
         self._attr_translation_placeholders = {"channel": self.channel_title}
 
     @property
+    def available(self) -> bool:
+        """Stay available regardless of signal — that's what this reports."""
+        return self.coordinator.last_update_success
+
+    @property
     def is_on(self) -> bool:
         """Whether the channel currently has a signal."""
         return bool(self.channel_data.get("online"))

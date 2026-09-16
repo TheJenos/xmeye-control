@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 
 from .coordinator import XmeyeConfigEntry, XmeyeCoordinator
 from .services import async_register_services
+from .views import XmeyeRecordingView
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -28,6 +29,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: XmeyeConfigEntry) -> boo
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     async_register_services(hass)
+    hass.http.register_view(XmeyeRecordingView(hass))
     return True
 
 
