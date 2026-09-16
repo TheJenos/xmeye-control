@@ -45,6 +45,8 @@ CMD_MACHINE = 1450
 CMD_USERS = 1472
 CMD_GROUPS = 1474
 CMD_SNAP = 1560
+CMD_ALARM_SET = 1500
+CMD_ALARM_INFO = 1504
 
 # Ret codes surfaced by the device.
 RET_CODES: dict[int, str] = {
@@ -173,6 +175,7 @@ class DvripClient:
         self._reader_task: asyncio.Task[None] | None = None
         self._waiters: list[asyncio.Future[dict[str, Any]]] = []
         self._collector: Callable[[bytes], None] | None = None
+        self._alarm_callback: Callable[[dict[str, Any]], None] | None = None
         self._lock = asyncio.Lock()
         self._talk_open = False
 
@@ -244,9 +247,15 @@ class DvripClient:
                     _LOGGER.debug("%s: resyncing on unexpected frame", self.host)
                     continue
                 self.session = struct.unpack_from("<I", head, 4)[0]
+                (cmd,) = struct.unpack_from("<H", head, 14)
                 (length,) = struct.unpack_from("<I", head, 16)
                 payload = await reader.readexactly(length) if length else b""
-                if self._collector is not None:
+                if cmd == CMD_ALARM_INFO:
+                    # Pushed unprompted by the device; never route it to
+                    # whatever request (or snapshot collector) happens to be
+                    # waiting, or it will corrupt that reply.
+                    self._handle_alarm(payload)
+                elif self._collector is not None:
                     self._collector(payload)
                 else:
                     self._deliver(payload)
@@ -270,7 +279,23 @@ class DvripClient:
             except json.JSONDecodeError:
                 fut.set_result({"_raw": text})
             return
-        # Unsolicited frame (media, alarm push) with nobody waiting — drop it.
+        # Unsolicited frame (media push) with nobody waiting — drop it.
+
+    def _handle_alarm(self, payload: bytes) -> None:
+        """Parse an AlarmInfo push frame and hand it to the registered callback."""
+        text = payload.rstrip(b"\x00\n").decode("utf-8", errors="replace")
+        try:
+            reply = json.loads(text)
+        except json.JSONDecodeError:
+            _LOGGER.debug("%s: malformed alarm push: %s", self.host, text)
+            return
+        info = reply.get("AlarmInfo")
+        if not isinstance(info, dict) or self._alarm_callback is None:
+            return
+        try:
+            self._alarm_callback(info)
+        except Exception:
+            _LOGGER.exception("%s: alarm callback failed", self.host)
 
     # ------------------------------------------------------------------
     # Framing
@@ -526,13 +551,18 @@ class DvripClient:
 
         Continuous moves run until the same command is sent with ``stop=True``.
         """
+        # Movement commands must not carry Preset: -1 — some firmware families
+        # silently ignore the whole command unless a non-preset move uses the
+        # sentinel value 65535 instead (the same value other DVRIP clients,
+        # e.g. python-dvr's ptz_step, use to mean "no preset").
+        preset_field = preset if "Preset" in command else 65535
         parameter = {
             "AUX": {"Number": 0, "Status": "On"},
             "Channel": channel,
             "MenuOpts": "Enter",
             "POINT": {"bottom": 0, "left": 0, "right": 0, "top": 0},
             "Pattern": "Stop" if stop else "SetBegin",
-            "Preset": preset,
+            "Preset": preset_field,
             "Step": step,
             "Tour": 1 if "Tour" in command else 0,
         }
@@ -545,6 +575,23 @@ class DvripClient:
             },
         )
         return self._check(reply, f"PTZ {command}")
+
+    def set_alarm_callback(
+        self, callback: Callable[[dict[str, Any]], None] | None
+    ) -> None:
+        """Register (or clear, with ``None``) the AlarmInfo push handler."""
+        self._alarm_callback = callback
+
+    async def start_alarm_monitor(self) -> dict[str, Any]:
+        """Ask the device to start pushing AlarmInfo events on this session.
+
+        Not every firmware supports this — some only push alarms to a
+        separately configured alarm server rather than the control session.
+        """
+        reply = await self.send_json(
+            CMD_ALARM_SET, {"Name": "", "SessionID": self._sid()}
+        )
+        return self._check(reply, "alarm subscribe")
 
     async def reboot(self) -> dict[str, Any]:
         """Reboot the device. The connection will drop."""

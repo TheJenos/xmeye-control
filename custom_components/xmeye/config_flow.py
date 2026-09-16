@@ -28,6 +28,7 @@ from .const import (
     CAMERA_SPEAKERS_IP,
     CAMERA_SPEAKERS_NONE,
     CONF_CAMERA_SPEAKERS,
+    CONF_PTZ_PRESET_COUNT,
     CONF_RTSP_PORT,
     CONF_RTSP_TEMPLATE,
     CONF_SKIP_EMPTY_CHANNELS,
@@ -35,6 +36,7 @@ from .const import (
     CONF_TALK_CHANNEL,
     DEFAULT_CAMERA_SPEAKERS,
     DEFAULT_PORT,
+    DEFAULT_PTZ_PRESET_COUNT,
     DEFAULT_RTSP_PORT,
     DEFAULT_RTSP_TEMPLATE,
     DEFAULT_SCAN_INTERVAL,
@@ -217,6 +219,14 @@ class XmeyeOptionsFlow(OptionsFlow):
                     CONF_SKIP_EMPTY_CHANNELS,
                     default=options.get(CONF_SKIP_EMPTY_CHANNELS, True),
                 ): bool,
+                vol.Optional(
+                    CONF_PTZ_PRESET_COUNT,
+                    default=options.get(
+                        CONF_PTZ_PRESET_COUNT, DEFAULT_PTZ_PRESET_COUNT
+                    ),
+                ): selector.NumberSelector(
+                    selector.NumberSelectorConfig(min=0, max=255, mode="box")
+                ),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

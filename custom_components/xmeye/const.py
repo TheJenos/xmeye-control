@@ -18,12 +18,18 @@ CONF_STREAM: Final = "stream"
 CONF_TALK_CHANNEL: Final = "talk_channel"
 CONF_SKIP_EMPTY_CHANNELS: Final = "skip_empty_channels"
 CONF_CAMERA_SPEAKERS: Final = "camera_speakers"
+CONF_PTZ_PRESET_COUNT: Final = "ptz_preset_count"
 
 # Which channels get their own speaker entity, so TTS can target one camera.
 CAMERA_SPEAKERS_IP: Final = "ip_cameras"
 CAMERA_SPEAKERS_ALL: Final = "all"
 CAMERA_SPEAKERS_NONE: Final = "none"
 DEFAULT_CAMERA_SPEAKERS: Final = CAMERA_SPEAKERS_IP
+
+# The device has no way to report how many presets are actually configured,
+# so a preset selector's option list is just this many numbered slots. 0
+# disables the selector, for recorders with no PTZ camera attached.
+DEFAULT_PTZ_PRESET_COUNT: Final = 8
 
 # How audio reaches one specific camera.
 #   direct  — open a session to the camera's own IP and use its speaker

@@ -45,13 +45,15 @@
           "rtsp_template": "RTSP URL template",
           "talk_channel": "Talk channel",
           "camera_speakers": "Speakers for individual cameras",
-          "skip_empty_channels": "Hide unused channels"
+          "skip_empty_channels": "Hide unused channels",
+          "ptz_preset_count": "PTZ presets per camera"
         },
         "data_description": {
           "rtsp_template": "Placeholders: {host}, {rtsp_port}, {username}, {password}, {channel} (1-based), {stream}. Only change this if live video does not work.",
           "talk_channel": "-1 sends audio to the device's own speaker output, which is what most firmware supports. Set a channel number only if your device routes talk per camera.",
           "camera_speakers": "Creates an extra speaker entity per camera so text-to-speech can target one camera instead of the whole recorder.",
-          "skip_empty_channels": "Do not create entities for channels with no camera attached."
+          "skip_empty_channels": "Do not create entities for channels with no camera attached.",
+          "ptz_preset_count": "How many numbered presets to offer per camera in the preset selector. Set to 0 to remove the selector, e.g. for recorders with no PTZ camera."
         }
       }
     }
@@ -72,6 +74,9 @@
       },
       "online": {
         "name": "{channel} signal"
+      },
+      "alarm": {
+        "name": "{channel} alarm"
       }
     },
     "sensor": {
@@ -102,6 +107,11 @@
       },
       "camera_speaker": {
         "name": "{channel} speaker"
+      }
+    },
+    "select": {
+      "ptz_preset": {
+        "name": "{channel} preset"
       }
     }
   },

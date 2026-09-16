@@ -9,6 +9,8 @@ from typing import Any
 
 import pytest
 from xmeye_dvrip import (
+    CMD_ALARM_INFO,
+    CMD_ALARM_SET,
     CMD_LOGIN,
     CMD_SNAP,
     CMD_TALK_DATA,
@@ -45,6 +47,7 @@ class FakeDevice:
         self.received: list[tuple[int, bytes]] = []
         self.server: asyncio.Server | None = None
         self.port = 0
+        self.writer: asyncio.StreamWriter | None = None
 
     async def start(self) -> None:
         """Listen on an ephemeral loopback port."""
@@ -61,6 +64,7 @@ class FakeDevice:
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
         """Serve one client until it disconnects."""
+        self.writer = writer
         try:
             while True:
                 head = await reader.readexactly(HEADER_LEN)
@@ -139,6 +143,14 @@ class FakeDevice:
         if name == "Missing":
             return json_frame(cmd + 1, {"Ret": 607, "Name": "Missing"})
         return json_frame(cmd + 1, {"Ret": 100, "Name": name})
+
+    async def push_alarm(self, info: dict[str, Any]) -> None:
+        """Send an unsolicited AlarmInfo frame, the way a real device would."""
+        assert self.writer is not None
+        self.writer.write(
+            json_frame(CMD_ALARM_INFO, {"Name": "AlarmInfo", "AlarmInfo": info})
+        )
+        await self.writer.drain()
 
 
 @pytest.fixture
@@ -355,7 +367,23 @@ async def test_ptz_sends_expected_body(device: FakeDevice) -> None:
     assert move["OPPTZControl"]["Parameter"]["Channel"] == 1
     assert move["OPPTZControl"]["Parameter"]["Step"] == 3
     assert move["OPPTZControl"]["Parameter"]["Pattern"] == "SetBegin"
+    # A directional move must not carry Preset: -1 (some firmware drops the
+    # whole command); 65535 is the "no preset" sentinel other clients use.
+    assert move["OPPTZControl"]["Parameter"]["Preset"] == 65535
     assert stop["OPPTZControl"]["Parameter"]["Pattern"] == "Stop"
+
+
+async def test_goto_preset_sends_the_real_preset_number(device: FakeDevice) -> None:
+    """Unlike movement commands, preset commands carry the caller's preset."""
+    client = await connect(device)
+    try:
+        device.received.clear()
+        await client.ptz("GotoPreset", channel=0, preset=7)
+    finally:
+        await client.close()
+
+    body = json.loads(device.received[0][1].rstrip(b"\x00\n"))
+    assert body["OPPTZControl"]["Parameter"]["Preset"] == 7
 
 
 async def test_session_id_is_formatted_for_the_device(device: FakeDevice) -> None:
@@ -368,3 +396,64 @@ async def test_session_id_is_formatted_for_the_device(device: FakeDevice) -> Non
         await client.close()
     body = json.loads(device.received[0][1].rstrip(b"\x00\n"))
     assert body["SessionID"] == "0x0000ABCD"
+
+
+async def test_start_alarm_monitor_sends_subscribe_request(device: FakeDevice) -> None:
+    """Subscribing sends an empty-name AlarmSet request."""
+    client = await connect(device)
+    try:
+        device.received.clear()
+        await client.start_alarm_monitor()
+    finally:
+        await client.close()
+
+    cmd, payload = device.received[0]
+    assert cmd == CMD_ALARM_SET
+    body = json.loads(payload.rstrip(b"\x00\n"))
+    assert body["Name"] == ""
+    assert body["SessionID"] == "0x0000ABCD"
+
+
+MOTION_START = {"Channel": 0, "Event": "MotionDetect", "State": "Start"}
+
+
+async def test_alarm_push_reaches_callback_without_consuming_replies(
+    device: FakeDevice,
+) -> None:
+    """An unsolicited AlarmInfo frame goes to the callback, not the next waiter."""
+    client = await connect(device)
+    events: list[dict[str, Any]] = []
+    client.set_alarm_callback(events.append)
+    try:
+        await client.start_alarm_monitor()
+        await device.push_alarm(MOTION_START)
+        for _ in range(50):
+            if events:
+                break
+            await asyncio.sleep(0.01)
+        # A normal request sent afterward must get its own reply, proving the
+        # alarm frame was not consumed by the waiter queue instead.
+        titles = await client.channel_titles()
+    finally:
+        await client.close()
+
+    assert events == [MOTION_START]
+    assert titles == ["Front", "Back"]
+
+
+async def test_alarm_callback_error_does_not_kill_read_loop(device: FakeDevice) -> None:
+    """A misbehaving alarm callback must not take the connection down with it."""
+    client = await connect(device)
+
+    def _broken(_info: dict[str, Any]) -> None:
+        raise ValueError("boom")
+
+    client.set_alarm_callback(_broken)
+    try:
+        await client.start_alarm_monitor()
+        await device.push_alarm(MOTION_START)
+        await asyncio.sleep(0.05)
+        titles = await client.channel_titles()
+    finally:
+        await client.close()
+    assert titles == ["Front", "Back"]

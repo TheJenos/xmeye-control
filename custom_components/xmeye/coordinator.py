@@ -36,6 +36,9 @@ class XmeyeData:
     system_info: dict[str, Any] = field(default_factory=dict)
     storage: list[dict[str, Any]] = field(default_factory=list)
     alarm: dict[str, Any] = field(default_factory=dict)
+    # Pushed by the device between polls (see XmeyeCoordinator._handle_alarm_event),
+    # so it is carried forward across polls rather than rebuilt from one.
+    motion: dict[int, dict[str, Any]] = field(default_factory=dict)
 
     def camera(self, channel: int) -> dict[str, Any]:
         """Return the state of one channel, or an empty mapping."""
@@ -68,6 +71,7 @@ class XmeyeCoordinator(DataUpdateCoordinator[XmeyeData]):
             password=entry.data.get(CONF_PASSWORD, ""),
             timeout=DEFAULT_TIMEOUT,
         )
+        self.client.set_alarm_callback(self._handle_alarm_event)
         self._connect_lock = asyncio.Lock()
 
         super().__init__(
@@ -101,10 +105,31 @@ class XmeyeCoordinator(DataUpdateCoordinator[XmeyeData]):
             await self.client.close()
             await self.client.connect()
             await self.client.login()
+            # Subscribed per-session — a fresh login always needs this again.
+            # Not every firmware answers it; that must not block startup.
+            await safe_call(self.client.start_alarm_monitor(), None)
             _LOGGER.debug(
                 "%s: logged in (%d channels)", self.host, self.client.channel_count
             )
             return self.client
+
+    def _handle_alarm_event(self, info: dict[str, Any]) -> None:
+        """Update a channel's alarm state as soon as the device reports one.
+
+        Runs from the socket read loop as events arrive, independent of the
+        poll cycle, so an alert shows up immediately rather than at the next
+        scheduled refresh.
+        """
+        channel = info.get("Channel")
+        state = info.get("State")
+        valid_state = state in ("Start", "Stop")
+        if self.data is None or not isinstance(channel, int) or not valid_state:
+            return
+        self.data.motion[channel] = {
+            "active": state == "Start",
+            "event": info.get("Event"),
+        }
+        self.async_set_updated_data(self.data)
 
     async def async_shutdown(self) -> None:
         """Close the connection when the entry unloads."""
@@ -132,6 +157,9 @@ class XmeyeCoordinator(DataUpdateCoordinator[XmeyeData]):
             system_info=system_info,
             storage=_flatten_storage(storage),
             alarm=work_state if isinstance(work_state, dict) else {},
+            # Pushed events land between polls; keep them rather than reset
+            # to empty on every refresh.
+            motion=self.data.motion if self.data else {},
         )
 
 
