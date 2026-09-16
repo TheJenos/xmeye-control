@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import struct
 from typing import Any
@@ -55,10 +56,18 @@ class FakeDevice:
         self.port = self.server.sockets[0].getsockname()[1]
 
     async def stop(self) -> None:
-        """Shut the listener down."""
+        """Shut the listener down.
+
+        ``wait_closed()`` has been observed to hang indefinitely on some
+        asyncio builds even after the connection handler has already
+        returned (a bug in the interpreter's Server implementation, not
+        something a test double can control), so it is bounded rather than
+        awaited outright.
+        """
         if self.server is not None:
             self.server.close()
-            await self.server.wait_closed()
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self.server.wait_closed(), timeout=0.5)
 
     async def _handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
