@@ -650,9 +650,7 @@ class DvripClient:
         files = reply.get("OPFileQuery")
         return files if isinstance(files, list) else []
 
-    async def download_recording(
-        self, filename: str, start: str, end: str
-    ) -> bytes:
+    async def download_recording(self, filename: str, start: str, end: str) -> bytes:
         """Download one recorded file's raw stream (OPPlayBack).
 
         ``filename``/``start``/``end`` must be the ``FileName``/``BeginTime``/
