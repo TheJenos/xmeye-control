@@ -551,11 +551,13 @@ class DvripClient:
 
         Continuous moves run until the same command is sent with ``stop=True``.
         """
-        # Movement commands must not carry Preset: -1 — some firmware families
-        # silently ignore the whole command unless a non-preset move uses the
-        # sentinel value 65535 instead (the same value other DVRIP clients,
-        # e.g. python-dvr's ptz_step, use to mean "no preset").
-        preset_field = preset if "Preset" in command else 65535
+        # Starting a movement must not carry Preset: -1 — some firmware
+        # families silently ignore the whole command unless a non-preset move
+        # uses the sentinel value 65535 instead (the same value other DVRIP
+        # clients, e.g. python-dvr's ptz_step, use to mean "no preset").
+        # Stopping that same movement, however, is what actually needs -1;
+        # sending 65535 there is what stopped ``ptz_stop`` from working.
+        preset_field = preset if stop or "Preset" in command else 65535
         parameter = {
             "AUX": {"Number": 0, "Status": "On"},
             "Channel": channel,

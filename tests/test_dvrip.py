@@ -380,6 +380,8 @@ async def test_ptz_sends_expected_body(device: FakeDevice) -> None:
     # whole command); 65535 is the "no preset" sentinel other clients use.
     assert move["OPPTZControl"]["Parameter"]["Preset"] == 65535
     assert stop["OPPTZControl"]["Parameter"]["Pattern"] == "Stop"
+    # Unlike the move that started it, the stop message must keep Preset: -1.
+    assert stop["OPPTZControl"]["Parameter"]["Preset"] == -1
 
 
 async def test_goto_preset_sends_the_real_preset_number(device: FakeDevice) -> None:
