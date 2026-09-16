@@ -426,7 +426,9 @@ class DvripClient:
     async def channel_titles(self) -> list[str]:
         """Channel display names."""
         titles = await self.get_config("ChannelTitle", CMD_CHANNEL_TITLE_GET)
-        return list(titles) if isinstance(titles, list) else []
+        if not isinstance(titles, list):
+            return []
+        return [t if isinstance(t, str) else "" for t in titles]
 
     async def set_channel_title(self, channel: int, title: str) -> dict[str, Any]:
         """Rename a single channel, preserving the others."""

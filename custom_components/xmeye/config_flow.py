@@ -101,7 +101,11 @@ class XmeyeConfigFlow(ConfigFlow, domain=DOMAIN):
                 self._abort_if_unique_id_configured(
                     updates={CONF_HOST: user_input[CONF_HOST]}
                 )
-                title = info.get("DeviceType") or f"XMEye {user_input[CONF_HOST]}"
+                device_type = info.get("DeviceType")
+                if isinstance(device_type, str) and device_type:
+                    title = device_type
+                else:
+                    title = f"XMEye {user_input[CONF_HOST]}"
                 return self.async_create_entry(title=title, data=user_input)
 
         return self.async_show_form(

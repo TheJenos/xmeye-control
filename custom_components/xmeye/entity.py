@@ -50,4 +50,7 @@ class XmeyeChannelEntity(XmeyeEntity):
     @property
     def channel_title(self) -> str:
         """The device-configured channel name, or a positional fallback."""
-        return self.channel_data.get("title") or f"Channel {self._channel + 1}"
+        title = self.channel_data.get("title")
+        if isinstance(title, str) and title:
+            return title
+        return f"Channel {self._channel + 1}"

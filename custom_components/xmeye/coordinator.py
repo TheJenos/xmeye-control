@@ -88,7 +88,10 @@ class XmeyeCoordinator(DataUpdateCoordinator[XmeyeData]):
     def device_name(self) -> str:
         """A human-friendly name for the device."""
         info = self.data.system_info if self.data else {}
-        return info.get("DeviceType") or f"XMEye {self.host}"
+        device_type = info.get("DeviceType")
+        if isinstance(device_type, str) and device_type:
+            return device_type
+        return f"XMEye {self.host}"
 
     async def async_ensure_connected(self) -> DvripClient:
         """Return a logged-in client, reconnecting if the session has dropped."""
