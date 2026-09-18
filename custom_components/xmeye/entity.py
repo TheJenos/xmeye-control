@@ -26,12 +26,24 @@ class XmeyeEntity(CoordinatorEntity[XmeyeCoordinator]):
             identifiers={(DOMAIN, entry_id)},
             name=coordinator.device_name,
             manufacturer=MANUFACTURER,
-            model=info.get("DeviceType"),
-            sw_version=info.get("SoftWareVersion"),
-            hw_version=info.get("HardWare"),
-            serial_number=info.get("SerialNo"),
+            model=_as_str(info.get("DeviceType")),
+            sw_version=_as_str(info.get("SoftWareVersion")),
+            hw_version=_as_str(info.get("HardWare")),
+            serial_number=_as_str(info.get("SerialNo")),
             configuration_url=f"http://{coordinator.host}",
         )
+
+
+def _as_str(value: Any) -> str | None:
+    """Coerce a device-reported field to the string DeviceInfo requires.
+
+    Firmware variants are inconsistent about whether fields like DeviceType
+    come back as a string or a raw number; the device registry has started
+    warning (and will eventually reject) anything that isn't a plain string.
+    """
+    if value is None:
+        return None
+    return str(value)
 
 
 class XmeyeChannelEntity(XmeyeEntity):
