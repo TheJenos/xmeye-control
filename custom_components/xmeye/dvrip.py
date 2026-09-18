@@ -50,9 +50,35 @@ CMD_ALARM_INFO = 1504
 CMD_PLAYBACK_CONTROL = 1420
 CMD_PLAYBACK_CLAIM = 1424
 
-# Downloading a recording streams the whole file, which can run for minutes;
-# the ordinary request timeout is sized for control commands, not this.
+# A floor/fallback for downloading a recording: observed devices stream
+# OPPlayBack's "download" at close to the recording's own real-time bitrate
+# rather than as a fast bulk copy, so the actual timeout is scaled to the
+# requested duration (see _download_timeout) — this only covers very short
+# requests and cases where that duration can't be parsed.
 DOWNLOAD_TIMEOUT = 120.0
+
+_TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
+
+def _download_timeout(start: str, end: str) -> float:
+    """How long to allow a download of ``[start, end)`` to take.
+
+    A device observed in the wild delivered ~15.3 MB in 120s while streaming
+    a channel whose own bitrate implies almost exactly that rate — i.e. it
+    was still only ~20% through a 10-minute request when the old fixed
+    120s timeout cut it off. 1.5x the requested duration (plus a flat
+    allowance for the Claim round-trip) gives headroom above real-time
+    pace without abandoning a download that's genuinely still progressing.
+    """
+    try:
+        duration = (
+            datetime.strptime(end, _TIME_FORMAT)  # noqa: DTZ007
+            - datetime.strptime(start, _TIME_FORMAT)  # noqa: DTZ007
+        ).total_seconds()
+    except ValueError:
+        return DOWNLOAD_TIMEOUT
+    return max(DOWNLOAD_TIMEOUT, duration * 1.5 + 30)
+
 
 # Ret codes surfaced by the device.
 RET_CODES: dict[int, str] = {
@@ -747,7 +773,7 @@ class DvripClient:
                     ),
                 )
                 await self._writer.drain()  # type: ignore[union-attr]
-                data = await asyncio.wait_for(fut, DOWNLOAD_TIMEOUT)
+                data = await asyncio.wait_for(fut, _download_timeout(start, end))
             except TimeoutError as err:
                 raise DvripError(
                     f"timed out downloading recording {filename!r} after "

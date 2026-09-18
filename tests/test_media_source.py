@@ -25,7 +25,7 @@ CAMERAS = [
 RECORDING = {
     "FileName": "/idea0/2024-01-01/001/main.h264",
     "BeginTime": "2024-01-01 10:00:00",
-    "EndTime": "2024-01-01 10:10:00",
+    "EndTime": "2024-01-01 10:05:00",
 }
 
 
@@ -130,7 +130,7 @@ async def test_day_lists_recordings_found_for_that_channel_and_range() -> None:
     assert file_item.can_play is True
     assert file_item.identifier == (
         "FILE|entry123|/idea0/2024-01-01/001/main.h264|"
-        "2024-01-01 10:00:00|2024-01-01 10:10:00"
+        "2024-01-01 10:00:00|2024-01-01 10:05:00"
     )
 
 
@@ -141,7 +141,7 @@ async def test_day_skips_entries_missing_required_fields() -> None:
 
 
 async def test_day_splits_a_long_recording_into_bounded_chunks() -> None:
-    """A 1-hour file becomes six 10-minute pieces, not one giant download."""
+    """A 1-hour file becomes twelve 5-minute pieces, not one giant download."""
     hour_long = {
         "FileName": "/idea0/2024-01-01/001/main.h264",
         "BeginTime": "2024-01-01 10:00:00",
@@ -154,12 +154,18 @@ async def test_day_splits_a_long_recording_into_bounded_chunks() -> None:
         f"FILE|entry123|/idea0/2024-01-01/001/main.h264|"
         f"2024-01-01 {start}:00|2024-01-01 {end}:00"
         for start, end in [
-            ("10:00", "10:10"),
-            ("10:10", "10:20"),
-            ("10:20", "10:30"),
-            ("10:30", "10:40"),
-            ("10:40", "10:50"),
-            ("10:50", "11:00"),
+            ("10:00", "10:05"),
+            ("10:05", "10:10"),
+            ("10:10", "10:15"),
+            ("10:15", "10:20"),
+            ("10:20", "10:25"),
+            ("10:25", "10:30"),
+            ("10:30", "10:35"),
+            ("10:35", "10:40"),
+            ("10:40", "10:45"),
+            ("10:45", "10:50"),
+            ("10:50", "10:55"),
+            ("10:55", "11:00"),
         ]
     ]
     assert all(child.can_play for child in result.children)
@@ -170,14 +176,15 @@ async def test_day_gives_a_short_final_chunk_instead_of_dropping_it() -> None:
     odd_length = {
         "FileName": "f.h264",
         "BeginTime": "2024-01-01 10:00:00",
-        "EndTime": "2024-01-01 10:15:00",
+        "EndTime": "2024-01-01 10:12:00",
     }
     source, _ = make_source(files=[odd_length])
     result = await source.async_browse_media(item("DAY|entry123|0|2024-01-01"))
 
     assert [child.identifier for child in result.children] == [
-        "FILE|entry123|f.h264|2024-01-01 10:00:00|2024-01-01 10:10:00",
-        "FILE|entry123|f.h264|2024-01-01 10:10:00|2024-01-01 10:15:00",
+        "FILE|entry123|f.h264|2024-01-01 10:00:00|2024-01-01 10:05:00",
+        "FILE|entry123|f.h264|2024-01-01 10:05:00|2024-01-01 10:10:00",
+        "FILE|entry123|f.h264|2024-01-01 10:10:00|2024-01-01 10:12:00",
     ]
 
 

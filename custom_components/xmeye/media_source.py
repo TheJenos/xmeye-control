@@ -29,11 +29,14 @@ from .views import async_generate_recording_url
 # day entries are offered to browse, going backward from today.
 DAYS_BACK = 14
 
-# Recorded files commonly span a full hour. Downloading that much of the
-# device's own raw format in one request (see dvrip.py's download_recording)
-# is slow and holds it all in memory, so every file is offered in pieces no
-# longer than this instead of one giant, slow-to-load entry.
-RECORDING_CHUNK = timedelta(minutes=10)
+# Recorded files commonly span a full hour. A device seen in the wild
+# streamed OPPlayBack's "download" at close to the recording's own real-time
+# bitrate rather than as a fast bulk copy — so a 10-minute chunk could take
+# on the order of 10 minutes to arrive, not seconds. Every file is offered in
+# pieces no longer than this so picking one is at least a bounded wait rather
+# than downloading (and holding in memory) up to an hour of raw video; see
+# dvrip.py's _download_timeout for how long a chunk this size is given.
+RECORDING_CHUNK = timedelta(minutes=5)
 
 TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
 

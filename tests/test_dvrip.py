@@ -17,10 +17,12 @@ from xmeye_dvrip import (
     CMD_PLAYBACK_CONTROL,
     CMD_SNAP,
     CMD_TALK_DATA,
+    DOWNLOAD_TIMEOUT,
     HEADER_LEN,
     DvripAuthError,
     DvripClient,
     DvripError,
+    _download_timeout,
     sofia_hash,
 )
 
@@ -218,6 +220,23 @@ def test_sofia_hash_reference_vector() -> None:
     """The empty password must hash to the documented value."""
     assert sofia_hash("") == "tlJwpbo6"
     assert len(sofia_hash("anything")) == 8
+
+
+def test_download_timeout_scales_with_the_requested_duration() -> None:
+    """A long request gets proportionally more time, not the flat floor."""
+    timeout = _download_timeout("2024-01-01 10:00:00", "2024-01-01 10:10:00")
+    assert timeout == 10 * 60 * 1.5 + 30
+
+
+def test_download_timeout_never_drops_below_the_floor() -> None:
+    """A short request still gets at least DOWNLOAD_TIMEOUT."""
+    timeout = _download_timeout("2024-01-01 10:00:00", "2024-01-01 10:00:05")
+    assert timeout == DOWNLOAD_TIMEOUT
+
+
+def test_download_timeout_falls_back_to_the_floor_on_unparsable_times() -> None:
+    """Placeholder or malformed timestamps must not crash the download."""
+    assert _download_timeout("start", "end") == DOWNLOAD_TIMEOUT
 
 
 async def test_login_sets_session_and_channels(device: FakeDevice) -> None:
