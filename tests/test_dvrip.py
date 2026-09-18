@@ -54,6 +54,12 @@ class FakeDevice:
         # Raw chunks a "DownloadStart" answers with, before the terminating
         # zero-length frame that signals end-of-file.
         self.download_chunks: list[bytes] = [b"chunk-one", b"chunk-two"]
+        # Simulates a device that drops the connection mid-transfer instead
+        # of ever sending the zero-length end-of-file frame.
+        self.drop_connection_instead_of_eof = False
+        # Simulates a device that drops the connection partway through a
+        # snapshot, instead of ever completing the JPEG.
+        self.drop_connection_on_snapshot = False
 
     async def start(self) -> None:
         """Listen on an ephemeral loopback port."""
@@ -90,9 +96,17 @@ class FakeDevice:
                     for chunk in self.download_chunks:
                         writer.write(frame(cmd + 1, chunk))
                         await writer.drain()
+                    if self.drop_connection_instead_of_eof:
+                        writer.close()
+                        return
                     writer.write(frame(cmd + 1, b""))  # end-of-file marker
                     await writer.drain()
                     continue
+                if cmd == CMD_SNAP and self.drop_connection_on_snapshot:
+                    writer.write(frame(cmd + 1, b"\xff\xd8junk"))  # no EOI marker
+                    await writer.drain()
+                    writer.close()
+                    return
                 reply = self._reply(cmd, payload)
                 if reply:
                     writer.write(reply)
@@ -555,3 +569,35 @@ async def test_download_recording_leaves_client_usable_afterwards(
     finally:
         await client.close()
     assert titles == ["Front", "Back"]
+
+
+async def test_download_recording_fails_fast_when_connection_drops(
+    device: FakeDevice,
+) -> None:
+    """A dropped connection must fail the download, not hang until DOWNLOAD_TIMEOUT.
+
+    Regression test: the collector future used by downloads (and snapshots)
+    used to be untouched when the reader loop died, so a device closing the
+    connection instead of sending the end-of-file frame looked identical to
+    a device that was just slow — both hung for the full timeout.
+    """
+    device.drop_connection_instead_of_eof = True
+    client = await connect(device)
+    try:
+        with pytest.raises(DvripError):
+            await asyncio.wait_for(
+                client.download_recording("f.h264", "start", "end"), timeout=2
+            )
+    finally:
+        await client.close()
+
+
+async def test_snapshot_fails_fast_when_connection_drops(device: FakeDevice) -> None:
+    """Same fix, exercised through the other collector-based operation."""
+    device.drop_connection_on_snapshot = True
+    client = await connect(device)
+    try:
+        with pytest.raises(DvripError):
+            await asyncio.wait_for(client.snapshot(0), timeout=2)
+    finally:
+        await client.close()

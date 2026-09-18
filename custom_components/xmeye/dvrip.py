@@ -181,6 +181,7 @@ class DvripClient:
         self._reader_task: asyncio.Task[None] | None = None
         self._waiters: list[asyncio.Future[dict[str, Any]]] = []
         self._collector: Callable[[bytes], None] | None = None
+        self._collector_fail: Callable[[BaseException], None] | None = None
         self._alarm_callback: Callable[[dict[str, Any]], None] | None = None
         self._lock = asyncio.Lock()
         self._talk_open = False
@@ -234,11 +235,19 @@ class DvripClient:
         self._fail_waiters(DvripConnectionError("connection closed"))
 
     def _fail_waiters(self, err: Exception) -> None:
-        """Reject every in-flight request; used when the socket dies."""
+        """Reject every in-flight request; used when the socket dies.
+
+        A snapshot or recording download waits on its own future via
+        ``_collector``, not ``_waiters`` — without this it would sit there
+        until its own timeout instead of failing the moment the connection
+        actually died.
+        """
         waiters, self._waiters = self._waiters, []
         for fut in waiters:
             if not fut.done():
                 fut.set_exception(err)
+        if self._collector_fail is not None:
+            self._collector_fail(err)
 
     async def _read_loop(self) -> None:
         """Read DVRIP frames forever, dispatching each payload."""
@@ -715,7 +724,12 @@ class DvripClient:
                     return
                 buffer.extend(payload)
 
+            def fail(err: BaseException) -> None:
+                if not fut.done():
+                    fut.set_exception(err)
+
             self._collector = collect
+            self._collector_fail = fail
             try:
                 self._write(
                     CMD_PLAYBACK_CONTROL,
@@ -736,10 +750,12 @@ class DvripClient:
                 data = await asyncio.wait_for(fut, DOWNLOAD_TIMEOUT)
             except TimeoutError as err:
                 raise DvripError(
-                    f"timed out downloading recording {filename!r}"
+                    f"timed out downloading recording {filename!r} after "
+                    f"receiving {len(buffer)} bytes"
                 ) from err
             finally:
                 self._collector = None
+                self._collector_fail = None
 
         with contextlib.suppress(DvripError):
             await self.send_json(
@@ -783,7 +799,12 @@ class DvripClient:
                 if eoi >= 0:
                     fut.set_result(bytes(buffer[soi : eoi + 2]))
 
+            def fail(err: BaseException) -> None:
+                if not fut.done():
+                    fut.set_exception(err)
+
             self._collector = collect
+            self._collector_fail = fail
             try:
                 self._write(
                     CMD_SNAP,
@@ -803,6 +824,7 @@ class DvripClient:
                 ) from err
             finally:
                 self._collector = None
+                self._collector_fail = None
 
     # ------------------------------------------------------------------
     # Talk backchannel
