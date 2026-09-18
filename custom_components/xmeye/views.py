@@ -57,7 +57,13 @@ class XmeyeRecordingView(HomeAssistantView):
         end: str,
         filename: str,
     ) -> web.Response:
-        """Serve one recording as MP4."""
+        """Serve one recording as MP4.
+
+        Every failure mode here must end in a real HTTP response. A video
+        element that gets no response at all just spins on "loading" forever
+        with no visible error, which is far harder to diagnose than a 502/500
+        showing up in the network tab and this view's own log line.
+        """
         entry = self.hass.config_entries.async_get_entry(entry_id)
         if entry is None:
             return web.Response(status=HTTPStatus.NOT_FOUND, text="Unknown device")
@@ -91,6 +97,17 @@ class XmeyeRecordingView(HomeAssistantView):
                 err,
             )
             return web.Response(status=HTTPStatus.INTERNAL_SERVER_ERROR, text=str(err))
+        except Exception:
+            _LOGGER.exception(
+                "%s: unexpected error remuxing recording %s",
+                coordinator.host,
+                filename_decoded,
+            )
+            return web.Response(
+                status=HTTPStatus.INTERNAL_SERVER_ERROR,
+                text="Unexpected error remuxing the recording; see the Home "
+                "Assistant log for details.",
+            )
         return web.Response(body=mp4, content_type="video/mp4")
 
 

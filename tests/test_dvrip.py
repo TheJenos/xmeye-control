@@ -514,6 +514,36 @@ async def test_download_recording_reassembles_chunks_until_the_eof_marker(
     assert actions == ["Claim", "DownloadStart", "DownloadStop"]
 
 
+async def test_download_recording_keeps_claim_and_start_atomic(
+    device: FakeDevice,
+) -> None:
+    """A concurrent command cannot land between Claim and DownloadStart.
+
+    Regression test: these used to be two separate lock acquisitions, so a
+    coordinator poll cycle's own commands could slip in between them — which
+    made some firmware silently drop DownloadStart, hanging playback.
+    """
+    client = await connect(device)
+    try:
+        download_task = asyncio.create_task(
+            client.download_recording("f.h264", "start", "end")
+        )
+        await asyncio.sleep(0.01)  # let it acquire the lock and send Claim
+        titles_task = asyncio.create_task(client.channel_titles())
+        data = await download_task
+        titles = await titles_task
+    finally:
+        await client.close()
+
+    assert data == b"chunk-onechunk-two"
+    assert titles == ["Front", "Back"]
+
+    cmds = [cmd for cmd, _ in device.received]
+    claim_index = cmds.index(CMD_PLAYBACK_CLAIM)
+    start_index = cmds.index(CMD_PLAYBACK_CONTROL)
+    assert start_index == claim_index + 1
+
+
 async def test_download_recording_leaves_client_usable_afterwards(
     device: FakeDevice,
 ) -> None:

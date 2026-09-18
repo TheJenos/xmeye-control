@@ -666,23 +666,43 @@ class DvripClient:
             "Value": 0,
             "TransMode": "TCP",
         }
-        claim = await self.send_json(
-            CMD_PLAYBACK_CLAIM,
-            {
-                "Name": "OPPlayBack",
-                "SessionID": self._sid(),
-                "OPPlayBack": {
-                    "Action": "Claim",
-                    "Parameter": parameter,
-                    "StartTime": start,
-                    "EndTime": end,
-                },
-            },
-        )
-        self._check(claim, "recording download claim")
 
         async with self._lock:
+            # Claim and DownloadStart must reach the device back-to-back:
+            # anything else landing between them — a poll cycle's own
+            # commands, most likely — has been observed to make the device
+            # silently drop DownloadStart, so both go out under one lock
+            # acquisition rather than one each like an ordinary command.
             loop = asyncio.get_running_loop()
+            claim_fut: asyncio.Future[dict[str, Any]] = loop.create_future()
+            self._waiters.append(claim_fut)
+            try:
+                self._write(
+                    CMD_PLAYBACK_CLAIM,
+                    self._encode(
+                        {
+                            "Name": "OPPlayBack",
+                            "SessionID": self._sid(),
+                            "OPPlayBack": {
+                                "Action": "Claim",
+                                "Parameter": parameter,
+                                "StartTime": start,
+                                "EndTime": end,
+                            },
+                        }
+                    ),
+                )
+                await self._writer.drain()  # type: ignore[union-attr]
+                claim_reply = await asyncio.wait_for(claim_fut, self.timeout)
+            except TimeoutError as err:
+                raise DvripConnectionError(
+                    f"timed out claiming recording {filename!r} for download"
+                ) from err
+            finally:
+                if claim_fut in self._waiters:
+                    self._waiters.remove(claim_fut)
+            self._check(claim_reply, "recording download claim")
+
             fut: asyncio.Future[bytes] = loop.create_future()
             buffer = bytearray()
 
