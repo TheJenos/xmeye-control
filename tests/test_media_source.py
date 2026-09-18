@@ -140,6 +140,61 @@ async def test_day_skips_entries_missing_required_fields() -> None:
     assert result.children == []
 
 
+async def test_day_splits_a_long_recording_into_bounded_chunks() -> None:
+    """A 1-hour file becomes six 10-minute pieces, not one giant download."""
+    hour_long = {
+        "FileName": "/idea0/2024-01-01/001/main.h264",
+        "BeginTime": "2024-01-01 10:00:00",
+        "EndTime": "2024-01-01 11:00:00",
+    }
+    source, _ = make_source(files=[hour_long])
+    result = await source.async_browse_media(item("DAY|entry123|0|2024-01-01"))
+
+    assert [child.identifier for child in result.children] == [
+        f"FILE|entry123|/idea0/2024-01-01/001/main.h264|"
+        f"2024-01-01 {start}:00|2024-01-01 {end}:00"
+        for start, end in [
+            ("10:00", "10:10"),
+            ("10:10", "10:20"),
+            ("10:20", "10:30"),
+            ("10:30", "10:40"),
+            ("10:40", "10:50"),
+            ("10:50", "11:00"),
+        ]
+    ]
+    assert all(child.can_play for child in result.children)
+
+
+async def test_day_gives_a_short_final_chunk_instead_of_dropping_it() -> None:
+    """A recording that isn't an exact multiple of the chunk size keeps its tail."""
+    odd_length = {
+        "FileName": "f.h264",
+        "BeginTime": "2024-01-01 10:00:00",
+        "EndTime": "2024-01-01 10:15:00",
+    }
+    source, _ = make_source(files=[odd_length])
+    result = await source.async_browse_media(item("DAY|entry123|0|2024-01-01"))
+
+    assert [child.identifier for child in result.children] == [
+        "FILE|entry123|f.h264|2024-01-01 10:00:00|2024-01-01 10:10:00",
+        "FILE|entry123|f.h264|2024-01-01 10:10:00|2024-01-01 10:15:00",
+    ]
+
+
+async def test_day_skips_a_recording_with_a_non_positive_duration() -> None:
+    source, _ = make_source(
+        files=[
+            {
+                "FileName": "f.h264",
+                "BeginTime": "2024-01-01 10:10:00",
+                "EndTime": "2024-01-01 10:00:00",
+            }
+        ]
+    )
+    result = await source.async_browse_media(item("DAY|entry123|0|2024-01-01"))
+    assert result.children == []
+
+
 async def test_day_raises_unresolvable_on_device_error() -> None:
     source, coordinator = make_source()
     coordinator.client.fail = DvripError("Ret 103")

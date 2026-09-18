@@ -29,6 +29,14 @@ from .views import async_generate_recording_url
 # day entries are offered to browse, going backward from today.
 DAYS_BACK = 14
 
+# Recorded files commonly span a full hour. Downloading that much of the
+# device's own raw format in one request (see dvrip.py's download_recording)
+# is slow and holds it all in memory, so every file is offered in pieces no
+# longer than this instead of one giant, slow-to-load entry.
+RECORDING_CHUNK = timedelta(minutes=10)
+
+TIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 
 async def async_get_media_source(hass: HomeAssistant) -> XmeyeMediaSource:
     """Set up the XMEye media source."""
@@ -169,16 +177,20 @@ class XmeyeMediaSource(MediaSource):
                 domain=DOMAIN,
                 identifier=(
                     f"FILE|{entry_id}|{file['FileName']}|"
-                    f"{file['BeginTime']}|{file['EndTime']}"
+                    f"{chunk_start.strftime(TIME_FORMAT)}|"
+                    f"{chunk_end.strftime(TIME_FORMAT)}"
                 ),
                 media_class=MediaClass.VIDEO,
                 media_content_type=MediaType.VIDEO,
-                title=f"{file['BeginTime']} - {file['EndTime']}",
+                title=(
+                    f"{chunk_start.strftime('%H:%M:%S')} - "
+                    f"{chunk_end.strftime('%H:%M:%S')}"
+                ),
                 can_play=True,
                 can_expand=False,
             )
             for file in files
-            if _has_file_fields(file)
+            for chunk_start, chunk_end in _chunks_for(file)
         ]
         return BrowseMediaSource(
             domain=DOMAIN,
@@ -200,6 +212,29 @@ class XmeyeMediaSource(MediaSource):
         return entry.runtime_data
 
 
-def _has_file_fields(file: dict[str, Any]) -> bool:
-    """Whether a search_recordings() entry has what's needed to play it back."""
-    return bool(file.get("FileName") and file.get("BeginTime") and file.get("EndTime"))
+def _chunks_for(file: dict[str, Any]) -> list[tuple[datetime, datetime]]:
+    """Split one search_recordings() entry into playable, bounded pieces.
+
+    Returns an empty list for an entry missing the fields needed to play it
+    back at all, or whose times don't parse as ``TIME_FORMAT``.
+    """
+    filename = file.get("FileName")
+    begin_raw = file.get("BeginTime")
+    end_raw = file.get("EndTime")
+    if not filename or not begin_raw or not end_raw:
+        return []
+    try:
+        begin = datetime.strptime(begin_raw, TIME_FORMAT)  # noqa: DTZ007
+        end = datetime.strptime(end_raw, TIME_FORMAT)  # noqa: DTZ007
+    except ValueError:
+        return []
+    if end <= begin:
+        return []
+
+    chunks: list[tuple[datetime, datetime]] = []
+    cursor = begin
+    while cursor < end:
+        chunk_end = min(cursor + RECORDING_CHUNK, end)
+        chunks.append((cursor, chunk_end))
+        cursor = chunk_end
+    return chunks
