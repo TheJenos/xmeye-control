@@ -17,6 +17,8 @@ from xmeye_dvrip import (
     CMD_PLAYBACK_CONTROL,
     CMD_SNAP,
     CMD_TALK_DATA,
+    CMD_TALK_DEVICE_DATA,
+    CMD_TALK_START,
     DOWNLOAD_TIMEOUT,
     HEADER_LEN,
     DvripAuthError,
@@ -62,6 +64,9 @@ class FakeDevice:
         # Simulates a device that drops the connection partway through a
         # snapshot, instead of ever completing the JPEG.
         self.drop_connection_on_snapshot = False
+        # Simulates a camera streaming talk traffic back while a reply is in
+        # flight: a Start/Stop ack and a frame of its own microphone audio.
+        self.talk_noise = False
 
     async def start(self) -> None:
         """Listen on an ephemeral loopback port."""
@@ -111,7 +116,7 @@ class FakeDevice:
                     return
                 reply = self._reply(cmd, payload)
                 if reply:
-                    writer.write(reply)
+                    writer.write(self._noise() + reply)
                     await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
@@ -124,6 +129,16 @@ class FakeDevice:
             body.get("Name") == "OPPlayBack"
             and body.get("OPPlayBack", {}).get("Action") == "DownloadStart"
         )
+
+    def _noise(self, *, acks: bool = True) -> bytes:
+        """Unsolicited talk frames, when ``talk_noise`` is on."""
+        if not self.talk_noise:
+            return b""
+        mic = frame(CMD_TALK_DEVICE_DATA, b"\x00\x00\x01\xfa\x0e\x02" + b"\xd5" * 322)
+        if not acks:
+            return mic
+        ack = json_frame(CMD_TALK_START + 1, {"Ret": 100, "Name": "OPTalk"})
+        return ack + mic
 
     def _reply(self, cmd: int, payload: bytes) -> bytes:
         """Produce the device's answer to one command."""
@@ -138,7 +153,11 @@ class FakeDevice:
             )
         if cmd == CMD_SNAP:
             # Real devices dribble the JPEG across several frames.
-            return frame(cmd + 1, b"\xff\xd8junk") + frame(cmd + 1, b"more\xff\xd9")
+            return (
+                frame(cmd + 1, b"\xff\xd8junk")
+                + self._noise(acks=False)
+                + frame(cmd + 1, b"more\xff\xd9")
+            )
         if cmd == CMD_TALK_DATA:
             return b""  # audio frames are never acknowledged
         body = json.loads(payload.rstrip(b"\x00\n"))
@@ -412,6 +431,36 @@ async def test_per_channel_talk_rejection_explains_itself() -> None:
     finally:
         await client.close()
         await dev.stop()
+
+
+async def test_talk_traffic_does_not_shift_replies(device: FakeDevice) -> None:
+    """Talk acks and microphone audio are never taken as a command's reply.
+
+    Arrival order alone would hand them to whichever request is waiting, and
+    every later reply on the session would then be off by one.
+    """
+    client = await connect(device)
+    device.talk_noise = True
+    try:
+        for _ in range(3):
+            await client.start_talk()
+            assert await client.channel_titles() == ["Front", "Back"]
+            await client.stop_talk()
+            reply = await client.keep_alive()
+            assert reply["Name"] == "KeepAlive"
+    finally:
+        await client.close()
+
+
+async def test_snapshot_ignores_microphone_audio(device: FakeDevice) -> None:
+    """Microphone frames landing mid-JPEG must not end up in the image."""
+    client = await connect(device)
+    device.talk_noise = True
+    try:
+        image = await client.snapshot(0)
+    finally:
+        await client.close()
+    assert image == b"\xff\xd8junkmore\xff\xd9"
 
 
 async def test_ptz_sends_expected_body(device: FakeDevice) -> None:
