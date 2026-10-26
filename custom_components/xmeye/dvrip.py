@@ -987,3 +987,32 @@ class DvripClient:
             if delay > 0:
                 await asyncio.sleep(delay)
         return sent
+
+
+async def talk_once(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    alaw: bytes,
+    channel: int | None = None,
+    cancel: asyncio.Event | None = None,
+) -> int:
+    """Play ``alaw`` over a talk session of its own, then close it.
+
+    Observed firmware ignores OPTalk Stop: the claim stays with the session
+    until its socket is closed, so every later claim on that session answers
+    Ret 103. Talking over a long-lived shared session therefore works exactly
+    once; a connection per playback releases the claim when it closes.
+    """
+    client = DvripClient(host=host, port=port, username=username, password=password)
+    try:
+        await client.connect()
+        await client.login()
+        await client.start_talk(channel)
+        try:
+            return await client.send_alaw(alaw, cancel=cancel)
+        finally:
+            await client.stop_talk()
+    finally:
+        await client.close()

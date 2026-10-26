@@ -26,6 +26,7 @@ from xmeye_dvrip import (
     DvripError,
     _download_timeout,
     sofia_hash,
+    talk_once,
 )
 
 
@@ -67,6 +68,11 @@ class FakeDevice:
         # Simulates a camera streaming talk traffic back while a reply is in
         # flight: a Start/Stop ack and a frame of its own microphone audio.
         self.talk_noise = False
+        # Simulates firmware that ignores OPTalk Stop: a talk claim stays with
+        # the connection that made it until that connection closes.
+        self.sticky_talk_claim = False
+        self.talk_claimed_by: asyncio.StreamWriter | None = None
+        self._conn: asyncio.StreamWriter | None = None
 
     async def start(self) -> None:
         """Listen on an ephemeral loopback port."""
@@ -114,12 +120,16 @@ class FakeDevice:
                     await writer.drain()
                     writer.close()
                     return
+                self._conn = writer
                 reply = self._reply(cmd, payload)
                 if reply:
                     writer.write(self._noise() + reply)
                     await writer.drain()
         except (asyncio.IncompleteReadError, ConnectionResetError):
             pass
+        finally:
+            if self.talk_claimed_by is writer:
+                self.talk_claimed_by = None
 
     @staticmethod
     def _is_download_start(payload: bytes) -> bool:
@@ -164,9 +174,13 @@ class FakeDevice:
         name = body.get("Name", "")
         if name == "OPTalk":
             if body["OPTalk"]["Action"] == "Claim":
-                return json_frame(
-                    cmd + 1, {"Ret": self.talk_claim_ret, "Name": "OPTalk"}
-                )
+                ret = self.talk_claim_ret
+                if self.sticky_talk_claim:
+                    if self.talk_claimed_by is None:
+                        self.talk_claimed_by = self._conn
+                    else:
+                        ret = 103
+                return json_frame(cmd + 1, {"Ret": ret, "Name": "OPTalk"})
             return b""
         if name == "ChannelTitle":
             return json_frame(cmd + 1, {"Ret": 100, "ChannelTitle": ["Front", "Back"]})
@@ -461,6 +475,67 @@ async def test_snapshot_ignores_microphone_audio(device: FakeDevice) -> None:
     finally:
         await client.close()
     assert image == b"\xff\xd8junkmore\xff\xd9"
+
+
+async def test_sticky_talk_claim_blocks_a_shared_session(device: FakeDevice) -> None:
+    """Where Stop does not release the claim, one session can only talk once."""
+    device.sticky_talk_claim = True
+    client = await connect(device)
+    try:
+        await client.start_talk()
+        await client.stop_talk()
+        with pytest.raises(DvripError) as excinfo:
+            await client.start_talk()
+        assert excinfo.value.ret == 103
+    finally:
+        await client.close()
+
+
+async def _wait_for_release(device: FakeDevice) -> None:
+    """Let the fake device notice a closed connection."""
+    for _ in range(50):
+        if device.talk_claimed_by is None:
+            return
+        await asyncio.sleep(0.01)
+
+
+async def test_talk_once_plays_every_time(device: FakeDevice) -> None:
+    """A session per playback releases the claim, so every playback works."""
+    device.sticky_talk_claim = True
+    for _ in range(3):
+        sent = await talk_once("127.0.0.1", device.port, "admin", "", b"\x55" * 640)
+        assert sent == 2
+        await _wait_for_release(device)
+        assert device.talk_claimed_by is None
+    audio = [p for cmd, p in device.received if cmd == CMD_TALK_DATA]
+    assert len(audio) == 6
+
+
+async def test_talk_once_releases_the_claim_when_cancelled(
+    device: FakeDevice,
+) -> None:
+    """Stopping a playback early still closes its session."""
+    device.sticky_talk_claim = True
+    cancel = asyncio.Event()
+    cancel.set()
+    sent = await talk_once(
+        "127.0.0.1", device.port, "admin", "", b"\x55" * 640, cancel=cancel
+    )
+    assert sent == 0
+    await _wait_for_release(device)
+    assert await talk_once("127.0.0.1", device.port, "admin", "", b"\x55" * 320) == 1
+
+
+async def test_talk_once_surfaces_a_refused_claim() -> None:
+    """A refused claim is raised to the caller with its Ret code."""
+    dev = FakeDevice(talk_claim_ret=103)
+    await dev.start()
+    try:
+        with pytest.raises(DvripError) as excinfo:
+            await talk_once("127.0.0.1", dev.port, "admin", "", b"\x55" * 320)
+        assert excinfo.value.ret == 103
+    finally:
+        await dev.stop()
 
 
 async def test_ptz_sends_expected_body(device: FakeDevice) -> None:

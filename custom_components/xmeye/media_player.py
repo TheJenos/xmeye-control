@@ -44,7 +44,7 @@ from .const import (
     ROUTE_DIRECT,
 )
 from .coordinator import XmeyeConfigEntry, XmeyeCoordinator
-from .dvrip import DEFAULT_PORT, DvripClient, DvripError
+from .dvrip import DEFAULT_PORT, DvripError, talk_once
 from .entity import XmeyeChannelEntity, XmeyeEntity
 
 _LOGGER = logging.getLogger(__name__)
@@ -170,15 +170,23 @@ class XmeyeSpeakerBase(MediaPlayerEntity):
             self._current_media = None
             self.async_write_ha_state()
 
-    async def _async_send_via(
-        self, client: DvripClient, alaw: bytes, channel: int | None
-    ) -> None:
-        """Open the talk channel on ``client``, push the samples, close it."""
-        await client.start_talk(channel)
-        try:
-            await client.send_alaw(alaw, cancel=self._cancel)
-        finally:
-            await client.stop_talk()
+    async def _async_talk_via_recorder(self, alaw: bytes, channel: int | None) -> None:
+        """Play the samples through the recorder on a session of their own.
+
+        Not the coordinator's shared session: the firmware only releases a talk
+        claim when its connection closes (see :func:`talk_once`).
+        """
+        coordinator = self.coordinator
+        entry = coordinator.config_entry
+        await talk_once(
+            host=coordinator.host,
+            port=coordinator.port,
+            username=entry.data.get(CONF_USERNAME, DEFAULT_USERNAME),
+            password=entry.data.get(CONF_PASSWORD, ""),
+            alaw=alaw,
+            channel=channel,
+            cancel=self._cancel,
+        )
 
     async def _async_transcode(self, url: str) -> bytes:
         """Run ffmpeg to produce raw 8 kHz mono A-law samples from ``url``."""
@@ -239,9 +247,8 @@ class XmeyeDeviceSpeaker(XmeyeEntity, XmeyeSpeakerBase):
         return int(value) if value is not None and int(value) >= 0 else None
 
     async def _async_deliver(self, alaw: bytes) -> None:
-        """Send the audio over the shared recorder session."""
-        client = await self.coordinator.async_ensure_connected()
-        await self._async_send_via(client, alaw, self._talk_channel)
+        """Send the audio through the recorder."""
+        await self._async_talk_via_recorder(alaw, self._talk_channel)
 
 
 class XmeyeCameraSpeaker(XmeyeChannelEntity, XmeyeSpeakerBase):
@@ -318,21 +325,16 @@ class XmeyeCameraSpeaker(XmeyeChannelEntity, XmeyeSpeakerBase):
         entry = self.coordinator.config_entry
         # The recorder masks stored camera passwords on read, so its own
         # credentials are the usual fallback — kit sold as a bundle shares them.
-        client = DvripClient(
+        await talk_once(
             host=host,
             port=camera.get("port") or DEFAULT_PORT,
             username=camera.get("username")
             or entry.data.get(CONF_USERNAME, DEFAULT_USERNAME),
             password=camera.get("password") or entry.data.get(CONF_PASSWORD, ""),
+            alaw=alaw,
+            cancel=self._cancel,
         )
-        try:
-            await client.connect()
-            await client.login()
-            await self._async_send_via(client, alaw, None)
-        finally:
-            await client.close()
 
     async def _async_deliver_via_recorder(self, alaw: bytes) -> None:
         """Ask the recorder to route talk to this channel."""
-        client = await self.coordinator.async_ensure_connected()
-        await self._async_send_via(client, alaw, self._channel)
+        await self._async_talk_via_recorder(alaw, self._channel)
