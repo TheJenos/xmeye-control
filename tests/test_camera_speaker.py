@@ -66,6 +66,7 @@ class FakeData:
 
 class FakeCoordinator:
     host = "192.168.1.2"
+    port = 34567
     device_name = "NVR"
 
     def __init__(self, cameras: list[dict[str, Any]]) -> None:
@@ -168,11 +169,9 @@ async def test_error_names_every_route_that_was_tried() -> None:
     assert speaker._route is None
 
 
-async def test_direct_route_uses_camera_then_recorder_credentials(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The camera's own username is used; the password falls back to the NVR's."""
-    speaker = make_speaker(0)
+@pytest.fixture
+def talk_client(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    """Replace the DVRIP client used for talk, recording how it was driven."""
     built: dict[str, Any] = {}
 
     class FakeClient:
@@ -192,9 +191,18 @@ async def test_direct_route_uses_camera_then_recorder_credentials(
         async def close(self) -> None:
             built["closed"] = True
 
-    monkeypatch.setattr("custom_components.xmeye.media_player.DvripClient", FakeClient)
+    monkeypatch.setattr("custom_components.xmeye.dvrip.DvripClient", FakeClient)
+    return built
+
+
+async def test_direct_route_uses_camera_then_recorder_credentials(
+    talk_client: dict[str, Any],
+) -> None:
+    """The camera's own username is used; the password falls back to the NVR's."""
+    speaker = make_speaker(0)
     await speaker._async_deliver_direct(b"\x55" * 320)
 
+    built = talk_client
     assert built["host"] == "192.168.1.50"
     assert built["port"] == 34567
     assert built["username"] == "camuser"  # from the recorder's camera table
@@ -202,4 +210,26 @@ async def test_direct_route_uses_camera_then_recorder_credentials(
     # A direct session talks to the camera's own audio-out, not a channel.
     assert built["talk_channel"] is None
     assert built["sent"] == 320
+    assert built["closed"] is True
+
+
+async def test_recorder_route_talks_on_a_session_of_its_own(
+    talk_client: dict[str, Any],
+) -> None:
+    """Talk via the recorder never borrows the coordinator's shared session.
+
+    Firmware has been seen to release a talk claim only when its connection
+    closes, so a claim made on the long-lived polling session would block
+    every later playback.
+    """
+    speaker = make_speaker(1)
+    await speaker._async_deliver_via_recorder(b"\x55" * 320)
+
+    built = talk_client
+    assert speaker.coordinator.ensure_calls == 0
+    assert built["host"] == "192.168.1.2"
+    assert built["port"] == 34567
+    assert built["username"] == "admin"
+    assert built["password"] == "nvrpass"
+    assert built["talk_channel"] == 1
     assert built["closed"] is True

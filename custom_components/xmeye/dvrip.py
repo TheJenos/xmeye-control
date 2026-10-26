@@ -39,6 +39,8 @@ CMD_SYSTEM_FUNCTION = 1360
 CMD_PTZ = 1400
 CMD_TALK_START = 1430
 CMD_TALK_DATA = 1432
+# Microphone audio the device streams back while the talk channel is open.
+CMD_TALK_DEVICE_DATA = 1433
 CMD_TALK_CLAIM = 1434
 CMD_FILE_QUERY = 1440
 CMD_MACHINE = 1450
@@ -179,7 +181,8 @@ class DvripClient:
 
     The client is *not* safe for unsynchronised concurrent use: every
     request/reply exchange is serialised behind an internal lock, because the
-    protocol correlates replies to requests purely by arrival order.
+    protocol carries no request id: a reply is recognised only by its command
+    (the request's command + 1) and its arrival order.
     """
 
     def __init__(
@@ -205,7 +208,8 @@ class DvripClient:
         self._reader: asyncio.StreamReader | None = None
         self._writer: asyncio.StreamWriter | None = None
         self._reader_task: asyncio.Task[None] | None = None
-        self._waiters: list[asyncio.Future[dict[str, Any]]] = []
+        # (expected reply command, future), oldest first.
+        self._waiters: list[tuple[int, asyncio.Future[dict[str, Any]]]] = []
         self._collector: Callable[[bytes], None] | None = None
         self._collector_fail: Callable[[BaseException], None] | None = None
         self._alarm_callback: Callable[[dict[str, Any]], None] | None = None
@@ -269,7 +273,7 @@ class DvripClient:
         actually died.
         """
         waiters, self._waiters = self._waiters, []
-        for fut in waiters:
+        for _reply_cmd, fut in waiters:
             if not fut.done():
                 fut.set_exception(err)
         if self._collector_fail is not None:
@@ -296,10 +300,15 @@ class DvripClient:
                     # whatever request (or snapshot collector) happens to be
                     # waiting, or it will corrupt that reply.
                     self._handle_alarm(payload)
+                elif cmd == CMD_TALK_DEVICE_DATA:
+                    # The device's microphone, streamed for as long as talk
+                    # is open. Nothing consumes it, and handing it on would
+                    # corrupt a snapshot or download in progress.
+                    continue
                 elif self._collector is not None:
                     self._collector(payload)
                 else:
-                    self._deliver(payload)
+                    self._deliver(cmd, payload)
         except asyncio.CancelledError:
             raise
         except (asyncio.IncompleteReadError, OSError) as err:
@@ -308,19 +317,25 @@ class DvripClient:
             _LOGGER.exception("%s: reader loop failed", self.host)
             self._fail_waiters(DvripConnectionError(str(err)))
 
-    def _deliver(self, payload: bytes) -> None:
-        """Hand a JSON payload to the oldest pending request."""
-        text = payload.rstrip(b"\x00\n").decode("utf-8", errors="replace")
-        while self._waiters:
-            fut = self._waiters.pop(0)
-            if fut.done():  # timed out already — skip its stale reply
+    def _deliver(self, cmd: int, payload: bytes) -> None:
+        """Hand a JSON payload to the oldest request awaiting ``cmd``.
+
+        Matching on the reply command, not just arrival order, keeps frames
+        nobody asked for (talk Start/Stop acks, media pushes) from being taken
+        as the reply to an unrelated request — which would shift every later
+        reply by one for the rest of the session.
+        """
+        for index, (reply_cmd, fut) in enumerate(self._waiters):
+            if reply_cmd != cmd or fut.done():
                 continue
+            del self._waiters[index]
+            text = payload.rstrip(b"\x00\n").decode("utf-8", errors="replace")
             try:
                 fut.set_result(json.loads(text))
             except json.JSONDecodeError:
                 fut.set_result({"_raw": text})
             return
-        # Unsolicited frame (media push) with nobody waiting — drop it.
+        _LOGGER.debug("%s: dropping unsolicited frame (command %d)", self.host, cmd)
 
     def _handle_alarm(self, payload: bytes) -> None:
         """Parse an AlarmInfo push frame and hand it to the registered callback."""
@@ -373,7 +388,8 @@ class DvripClient:
         async with self._lock:
             loop = asyncio.get_running_loop()
             fut: asyncio.Future[dict[str, Any]] = loop.create_future()
-            self._waiters.append(fut)
+            waiter = (cmd + 1, fut)
+            self._waiters.append(waiter)
             try:
                 self._write(cmd, self._encode(body))
                 await self._writer.drain()  # type: ignore[union-attr]
@@ -383,8 +399,8 @@ class DvripClient:
                     f"timed out waiting for a reply to command {cmd}"
                 ) from err
             finally:
-                if fut in self._waiters:
-                    self._waiters.remove(fut)
+                if waiter in self._waiters:
+                    self._waiters.remove(waiter)
 
     @staticmethod
     def _check(reply: dict[str, Any], what: str) -> dict[str, Any]:
@@ -710,7 +726,8 @@ class DvripClient:
             # acquisition rather than one each like an ordinary command.
             loop = asyncio.get_running_loop()
             claim_fut: asyncio.Future[dict[str, Any]] = loop.create_future()
-            self._waiters.append(claim_fut)
+            claim_waiter = (CMD_PLAYBACK_CLAIM + 1, claim_fut)
+            self._waiters.append(claim_waiter)
             try:
                 self._write(
                     CMD_PLAYBACK_CLAIM,
@@ -734,8 +751,8 @@ class DvripClient:
                     f"timed out claiming recording {filename!r} for download"
                 ) from err
             finally:
-                if claim_fut in self._waiters:
-                    self._waiters.remove(claim_fut)
+                if claim_waiter in self._waiters:
+                    self._waiters.remove(claim_waiter)
             self._check(claim_reply, "recording download claim")
 
             fut: asyncio.Future[bytes] = loop.create_future()
@@ -970,3 +987,32 @@ class DvripClient:
             if delay > 0:
                 await asyncio.sleep(delay)
         return sent
+
+
+async def talk_once(
+    host: str,
+    port: int,
+    username: str,
+    password: str,
+    alaw: bytes,
+    channel: int | None = None,
+    cancel: asyncio.Event | None = None,
+) -> int:
+    """Play ``alaw`` over a talk session of its own, then close it.
+
+    Observed firmware ignores OPTalk Stop: the claim stays with the session
+    until its socket is closed, so every later claim on that session answers
+    Ret 103. Talking over a long-lived shared session therefore works exactly
+    once; a connection per playback releases the claim when it closes.
+    """
+    client = DvripClient(host=host, port=port, username=username, password=password)
+    try:
+        await client.connect()
+        await client.login()
+        await client.start_talk(channel)
+        try:
+            return await client.send_alaw(alaw, cancel=cancel)
+        finally:
+            await client.stop_talk()
+    finally:
+        await client.close()
